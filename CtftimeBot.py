@@ -18,11 +18,34 @@ response = requests.get(url, headers=headers)
 print(response.content)
 '''
 total_ctftime = []
+headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'}
 db_column = ["Alert", "Title", "StartTime", "FinishTime", "Duration", "Url", "Desc", "Or_id", "Or_name", "Event_id", "Ctf_id"]
-discord_webhook = "https://discord.com/api/webhooks/1089601231019835604/yS9-GfEdwOXYKY_RgI0TPlsSZOVNm8cLOIV3VVfPYwEffWOwauQ8o5sfLZ-DgTg2xrMi"
+discord_webhook = "https://discord.com/api/webhooks/1090314519781314731/L9HzIIXjVxuOkLGOUNDt9sxcCOHhZFqaQAErKb2bgYTnZJrcJCskMqsWWgik_yB6Gbj3"
 discord_headers={
     'Content-Type': 'application/json'
 }
+
+def collect_imgurl(url):
+    start = False
+    add_path = ''
+    
+    responses = requests.get(url, headers=headers)
+    response = responses.content.decode('utf-8')[1:-1]
+    for r in response.split('\n'):
+        if '<div class="span2">' in r:
+            start = True
+            continue
+        elif start and '</div>' in r:
+            start = False
+        
+        if start:
+            add_path += r
+    
+    add_path = add_path.replace(' ','')
+    src = add_path.split("\"")[1]
+    return_url = "https://ctftime.org" + src
+    
+    return return_url
 
 def alert_ctftime():
     # db에 저장된 ctftime데이터 전부 탐색
@@ -30,11 +53,39 @@ def alert_ctftime():
     cur = conn.cursor()
     
     cur.execute("SELECT * FROM CtfTime WHERE alert = 'X'") # 1. select로 alert가 'x'인 데이터 필터링
-    for row in cur: # (그 데이터를 하나씩 반복)
+    rows = cur.fetchall()
+    
+    for row in rows: # (그 데이터를 하나씩 반복)
         list_row = list(row)
         # 2. 이미지 크롤링해서 전달
-        
         # 3. 데이터를 webhook으로 전달
+        
+        # ctf id 이용 / event id 이용
+        ctf_url = "https://ctftime.org/ctf/" + str(list_row[10])
+        image_url = collect_imgurl(ctf_url)
+        
+        # 메시지와 함께 전송될 미리보기 생성
+        data = {
+            "content": "",
+            "embeds": [
+                {
+                    "image": {"url": image_url}
+                }
+            ]
+        }
+
+        # POST 요청으로 메시지와 미리보기 전송
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(discord_webhook, data=json.dumps(data), headers=discord_headers)
+        
+        '''
+        # 응답 확인
+        if response.status_code == 204:
+            print(f"Alert - {list_row[1]}")
+        else:
+            print("fdas") #
+            print(f"Message sending failed with status code {response.status_code}")
+        '''
         
         # 
         list_start = list_row[2].split('T')
@@ -50,8 +101,12 @@ def alert_ctftime():
         message += f'[Duration]\t : \t{list_row[4]}\n '
         message += f'[Url]\t : \t{list_row[5]}\n '
         
+        # "Or_id", "Or_name", "Event_id", "Ctf_id"
+        #print(list_row[7], list_row[8], list_row[9], list_row[10])
+        
         # 미리보기를 생성할 URL
-        url = str(list_row[5])
+        event_url = "https://ctftime.org/event/" + str(list_row[9])
+        image_url = collect_imgurl(event_url)
 
         # 메시지와 함께 전송될 미리보기 생성
         data = {
@@ -60,9 +115,9 @@ def alert_ctftime():
                 {
                     "title": str(list_row[1]),
                     "description": f"{starttime[:-6]} -> {finishtime[:-6]}",
-                    "url": url,
+                    "url": str(list_row[5]),
                     "color": 16711680,
-                    "image": {"url": "https://img.freepik.com/premium-photo/pomeranian-dog-on-a-white-background_63176-471.jpg"}
+                    "image": {"url": image_url}
                 }
             ]
         }
@@ -71,24 +126,30 @@ def alert_ctftime():
         headers = {"Content-Type": "application/json"}
         response = requests.post(discord_webhook, data=json.dumps(data), headers=discord_headers)
 
+        '''
         # 응답 확인
         if response.status_code == 204:
-            print("Message sent successfully!")
+            print(f"Alert - {list_row[1]}")
         else:
             print(f"Message sending failed with status code {response.status_code}")
+        '''
 
         response = requests.post(discord_webhook,headers=discord_headers,data=data)
         
-        # next 이미지 크롤링 하여 alert시 image_url전달
+        # 3. update기능을 이용하여 alert 'o'로 변경
+        update_spl = f'UPDATE CtfTime SET Alert="O" WHERE Title="{list_row[1]}"'
+        #print(update_spl)
+        cur.execute(update_spl)
+        conn.commit()
         
         print(f"Alert - {list_row[1]}")
-        sys.exit()
         
-        # 3. update기능을 이용하여 alert 'o'로 변경
-        print(row)
+    conn.close()
 
 def insert_ctftime(list_response): # list내부에 dict들
     add_count = 0
+    recent_time = time.time()
+    
     conn = sqlite3.connect('ctftime.db')
     cur = conn.cursor()
     
@@ -104,7 +165,14 @@ def insert_ctftime(list_response): # list내부에 dict들
             
             Alert = "X"
             Title = response['title']
-            StartTime = response['start']
+            StartTime = response['start'][:-6]
+            # 기간 한참 남은 ctf pass
+            change_time = time.mktime(datetime.strptime(StartTime,'%Y-%m-%dT%H:%M:%S').timetuple())
+
+            # 14 days
+            if recent_time + 1209600 < change_time:
+                continue
+            
             FinishTime = response['finish']
             Duration = response['duration'] # 가공 필요
             Duration = f"{Duration['days']} days - {Duration['hours']} hours"
@@ -119,7 +187,7 @@ def insert_ctftime(list_response): # list내부에 dict들
                 (Alert, Title, StartTime, FinishTime, Duration, Url, Desc, Or_id, Or_name, Event_id, Ctf_id))
             conn.commit() # 이것 해야지 데이터가 입력됨
             add_count += 1
-    print(f"[+] Insert Data - {add_count}")    
+    print(f"[+] Insert Data - {add_count}", end="\n\n")    
     conn.close()
 
 def crawling_ctftime():
@@ -127,9 +195,8 @@ def crawling_ctftime():
     datetimes = str(datetime.fromtimestamp(timestamp))
 
     number = 100
-    end_time = timestamp+1010000
-    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'}
-    url = "https://ctftime.org/api/v1/events/?limit={number}&start={timestamp}&finish={end_time}"
+    end_time = timestamp+1240000
+    url = f"https://ctftime.org/api/v1/events/?limit={number}&start={timestamp}&finish={end_time}"
 
     responses = requests.get(url, headers=headers)
     response = responses.content.decode('utf-8')[1:-1]
@@ -155,6 +222,7 @@ def crawling_ctftime():
             
             list_response.append(dict_str)
             dict_str = ""
+            
     # json변환 완료
     for i in range(len(list_response)):
         list_response[i] = json.loads(list_response[i])
@@ -203,5 +271,7 @@ init_CTFData() # DB내에 ctftime데이터 로딩
 list_response = crawling_ctftime()
 insert_ctftime(list_response) # 중복이 없을 경우만 insert
 
-# Next : alert를 기준으로 Discord봇에 웹훅
+# alert를 기준으로 Discord봇에 웹훅
 alert_ctftime()
+
+# Next : 일정시간마다 자동 실행하는 쉴스크립트 개발
