@@ -20,10 +20,16 @@ print(response.content)
 total_ctftime = []
 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'}
 db_column = ["Alert", "Title", "StartTime", "FinishTime", "Duration", "Url", "Desc", "Or_id", "Or_name", "Event_id", "Ctf_id"]
-discord_webhook = "https://discord.com/api/webhooks/1090314519781314731/L9HzIIXjVxuOkLGOUNDt9sxcCOHhZFqaQAErKb2bgYTnZJrcJCskMqsWWgik_yB6Gbj3"
 discord_headers={
     'Content-Type': 'application/json'
 }
+
+def read_webhook():
+	with open('./webhook') as f:
+		webhook = f.readline()[:-1]
+	return webhook
+
+discord_webhook = read_webhook()
 
 def collect_imgurl(url):
     start = False
@@ -257,6 +263,8 @@ def init_CTFData():
     # 테이블 내에 데이터 가져와서 저장
     load_DBData(conn)
     conn.close()
+
+# ----------------------------------------
 
 # (1) DB의 유무확인
 # (1-1) DB를 생성 / (1-2) DB내부에 데이터 로딩
